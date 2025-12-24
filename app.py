@@ -277,7 +277,7 @@ else:
         st.warning("En az 2 sütun seçmelisin.")
     else:
         X = df_view[pca_cols].apply(pd.to_numeric, errors="coerce").dropna()
-       if X.shape[0] < 20:
+    if X.shape[0] < 20:
     st.warning("PCA için yeterli temiz satır yok. Farklı sütun seç veya filtreleri azalt.")
     st.stop()
         else:
