@@ -317,6 +317,10 @@ if len(pca_cols_default) >= 2:
         if X.shape[0] >= 20:
             Xs = StandardScaler().fit_transform(X.values)
             comps = PCA(n_components=2, random_state=42).fit_transform(Xs)
+            
+            if comps.shape[0] < 20:
+            st.warning("KMeans için yeterli veri yok.")
+            st.stop()
 
             k = st.slider("Cluster sayısı (k)", 2, 6, 3)
             km = KMeans(n_clusters=k, random_state=42, n_init=10)
