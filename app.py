@@ -1,5 +1,6 @@
 import io
 import re
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,16 +14,17 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
+
 # -----------------------
 # Page setup
 # -----------------------
 st.set_page_config(page_title="Student Performance Dashboard", layout="wide")
 st.title("Higher Education Students Performance — Streamlit Dashboard")
-
 st.caption(
-    "Bu dashboard, hocanızın Streamlit exercise’ındaki EDA + PCA + ML akışını "
-    "Higher Education Students Performance veri setine uyarlamak için hazırlanmıştır."
+    "Bu dashboard: EDA (grafikler) + Korelasyon + PCA + KMeans segmentasyon + "
+    "Model karşılaştırma (LogReg vs RandomForest) akışını içerir."
 )
+
 
 # -----------------------
 # Load data
@@ -31,22 +33,15 @@ st.sidebar.header("1) Veri Yükleme")
 uploaded = st.sidebar.file_uploader("CSV yükle (opsiyonel)", type=["csv"])
 
 @st.cache_data(show_spinner=False)
-def load_df_from_bytes(b: bytes) -> pd.DataFrame:
-    return pd.read_csv(io.BytesIO(b))
-
-@st.cache_data(show_spinner=False)
 def load_df_from_path(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
-
-# Default: local data.csv (repo içine koyulmalı)
-DEFAULT_PATH = "data.csv"
 
 if uploaded is not None:
     df = pd.read_csv(uploaded)
     st.sidebar.success("CSV yüklendi.")
 else:
     try:
-        df = load_df_from_path(DEFAULT_PATH)
+        df = load_df_from_path("data.csv")
         st.sidebar.info("Repo içindeki data.csv kullanılıyor.")
     except Exception as e:
         st.error(
@@ -55,25 +50,30 @@ else:
         )
         st.stop()
 
-# -----------------------
-# Basic cleaning / types
-# -----------------------
-# UCI dataset often has numbered columns "1".."30". Keep them as strings.
+# Kolon isimlerini string yap
 df.columns = [str(c).strip() for c in df.columns]
 
+
+# -----------------------
 # Optional filters
+# -----------------------
 st.sidebar.header("2) Filtreler")
 course_col = "COURSE ID" if "COURSE ID" in df.columns else None
 grade_col = "GRADE" if "GRADE" in df.columns else None
 
 if course_col:
     course_vals = sorted(df[course_col].dropna().unique().tolist())
-    selected_courses = st.sidebar.multiselect("COURSE ID filtrele", course_vals, default=course_vals)
+    selected_courses = st.sidebar.multiselect(
+        "COURSE ID filtrele",
+        course_vals,
+        default=course_vals
+    )
     df_view = df[df[course_col].isin(selected_courses)].copy()
 else:
     df_view = df.copy()
 
 st.sidebar.divider()
+
 
 # -----------------------
 # 1) Head / overview
@@ -96,37 +96,40 @@ with st.expander("Sütun tipleri (dtype)"):
 
 st.divider()
 
+
 # -----------------------
-# Auto-detect categorical vs numeric (based on unique count)
+# Detect categorical vs numeric-ish columns
 # -----------------------
 def is_categorical(series: pd.Series) -> bool:
-    # If object -> categorical; if numeric but small unique -> treat as categorical (encoded categories)
     if series.dtype == "object":
         return True
     nunique = series.nunique(dropna=True)
-    return nunique <= 10
+    return nunique <= 10  # encoded categories
 
 cat_cols = [c for c in df_view.columns if is_categorical(df_view[c]) and c != "STUDENT ID"]
-num_cols = [c for c in df_view.columns if c not in cat_cols and c != "STUDENT ID"]
+num_like_cols = [c for c in df_view.columns if c not in ["STUDENT ID"]]
 
-# Many columns are encoded categories; keep the target in its own group
+# target'ı (GRADE) kategorik listeden çıkar (grafiklerde ayrı kullanalım)
 if grade_col and grade_col in cat_cols:
     cat_cols = [c for c in cat_cols if c != grade_col]
-elif grade_col and grade_col in num_cols:
-    num_cols = [c for c in num_cols if c != grade_col]
+
+# Feature sütunları: UCI datasette genelde "1".."30"
+feature_num_cols = [c for c in df_view.columns if re.fullmatch(r"\d+", c)]
+
 
 # -----------------------
 # 3) Categorical distribution (Pie / Bar)
 # -----------------------
 st.subheader("3) Kategorik değişken analizi (Pie / Bar)")
 if len(cat_cols) == 0:
-    st.info("Kategorik sütun bulunamadı (veya hepsi sayısal görünüyor).")
+    st.info("Kategorik sütun bulunamadı.")
 else:
     left, right = st.columns([1, 2])
     with left:
         cat = st.selectbox("Kategorik sütun seç", cat_cols)
         topn = st.slider("En fazla kaç kategori gösterilsin?", 5, 30, 10)
         chart_type = st.radio("Grafik tipi", ["Pie", "Bar"], horizontal=True)
+
     vc = df_view[cat].fillna("NA").value_counts().head(topn)
 
     fig, ax = plt.subplots()
@@ -137,14 +140,16 @@ else:
         ax.bar([str(x) for x in vc.index], vc.values)
         ax.set_title(f"{cat} dağılımı (Top {topn})")
         ax.tick_params(axis="x", rotation=45)
+
     st.pyplot(fig, use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 4) Top 10 group by chosen category (count)
+# 4) Top 10 category counts
 # -----------------------
-st.subheader("4) Top 10 kategori (işlem/satır sayısı)")
+st.subheader("4) Top 10 kategori (satır sayısı)")
 if len(cat_cols) == 0:
     st.info("Bu bölüm için kategorik sütun gerekli.")
 else:
@@ -159,47 +164,48 @@ else:
 
 st.divider()
 
+
 # -----------------------
-# 5) Scatter plot (any two numeric-like columns)
+# 5) Scatter plot (choose any two columns and coerce to numeric)
 # -----------------------
 st.subheader("5) Scatter Plot (İki değişken ilişkisi)")
-# Treat all non-object columns as numeric candidates (even if encoded)
-numeric_candidates = [c for c in df_view.columns if c != "STUDENT ID"]
-if grade_col and grade_col in numeric_candidates:
-    # keep grade available for y-axis too; don't remove
-    pass
-
-if len(numeric_candidates) < 2:
-    st.info("Scatter için en az 2 sayısal/encode sütun gerekli.")
+if len(num_like_cols) < 2:
+    st.info("Scatter için en az 2 sütun gerekli.")
 else:
     left, right = st.columns(2)
     with left:
-        xcol = st.selectbox("X sütunu", numeric_candidates, index=0)
+        xcol = st.selectbox("X sütunu", num_like_cols, index=0)
     with right:
-        ycol = st.selectbox("Y sütunu", numeric_candidates, index=min(1, len(numeric_candidates)-1))
+        ycol = st.selectbox("Y sütunu", num_like_cols, index=min(1, len(num_like_cols) - 1))
 
     x = pd.to_numeric(df_view[xcol], errors="coerce")
     y = pd.to_numeric(df_view[ycol], errors="coerce")
     mask = x.notna() & y.notna()
 
-    fig, ax = plt.subplots()
-    ax.scatter(x[mask], y[mask], s=18)
-    ax.set_xlabel(xcol)
-    ax.set_ylabel(ycol)
-    ax.set_title(f"{xcol} vs {ycol}")
-    st.pyplot(fig, use_container_width=True)
+    if mask.sum() == 0:
+        st.warning("Seçilen iki sütundan sayısal değer üretilemedi (hepsi NaN oldu).")
+    else:
+        fig, ax = plt.subplots()
+        ax.scatter(x[mask], y[mask], s=18)
+        ax.set_xlabel(xcol)
+        ax.set_ylabel(ycol)
+        ax.set_title(f"{xcol} vs {ycol}")
+        st.pyplot(fig, use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 6) Derived score + histogram
+# 6) Derived TotalScore + histogram + boxplot by Grade
 # -----------------------
 st.subheader("6) Türetilmiş skor: TotalScore (1..30 sütunlarının toplamı)")
-feature_num_cols = [c for c in df_view.columns if re.fullmatch(r"\d+", c)]
-if len(feature_num_cols) > 0:
+if len(feature_num_cols) == 0:
+    st.info("Bu veri setinde '1..30' formatında feature sütunları bulunamadı (TotalScore üretilemedi).")
+else:
     tmp = df_view.copy()
     for c in feature_num_cols:
         tmp[c] = pd.to_numeric(tmp[c], errors="coerce")
+
     tmp["TotalScore"] = tmp[feature_num_cols].sum(axis=1, skipna=True)
 
     fig, ax = plt.subplots()
@@ -209,44 +215,45 @@ if len(feature_num_cols) > 0:
     st.pyplot(fig, use_container_width=True)
 
     if grade_col and grade_col in df_view.columns:
-        # Boxplot: TotalScore by Grade
         st.caption("TotalScore ile GRADE ilişkisi (boxplot)")
         grades = sorted(df_view[grade_col].dropna().unique().tolist())
         data = [tmp.loc[tmp[grade_col] == g, "TotalScore"].dropna().values for g in grades]
-        fig2, ax2 = plt.subplots()
-        ax2.boxplot(data, labels=[str(g) for g in grades])
-        ax2.set_title("TotalScore by GRADE")
-        ax2.set_xlabel("GRADE")
-        ax2.set_ylabel("TotalScore")
-        st.pyplot(fig2, use_container_width=True)
-else:
-    st.info("Bu veri setinde '1..30' formatında sütunlar bulunamadı, TotalScore üretilemedi.")
+
+        if len(data) > 0:
+            fig2, ax2 = plt.subplots()
+            ax2.boxplot(data, labels=[str(g) for g in grades])
+            ax2.set_title("TotalScore by GRADE")
+            ax2.set_xlabel("GRADE")
+            ax2.set_ylabel("TotalScore")
+            st.pyplot(fig2, use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 7) "Time series" alternative (since no date)
-# Instead: distribution by Course ID (stacked)
+# 7) Alternative to time series: Grade distribution by Course
 # -----------------------
-st.subheader("7) Zaman serisi yoksa alternatif: COURSE ID bazında GRADE dağılımı")
-if course_col and grade_col and course_col in df_view.columns and grade_col in df_view.columns:
+st.subheader("7) Alternatif: COURSE ID bazında GRADE dağılımı")
+if course_col and grade_col and (course_col in df_view.columns) and (grade_col in df_view.columns):
     pivot = pd.crosstab(df_view[course_col], df_view[grade_col])
     st.dataframe(pivot, use_container_width=True)
 else:
-    st.info("COURSE ID ve GRADE sütunları yoksa bu bölüm atlanır.")
+    st.info("COURSE ID ve/veya GRADE sütunu yoksa bu bölüm atlanır.")
 
 st.divider()
 
+
 # -----------------------
-# 8) Correlation heatmap (numeric)
+# 8) Correlation heatmap
 # -----------------------
 st.subheader("8) Korelasyon Heatmap (sayısal sütunlar)")
-# Use numeric conversion for all columns except STUDENT ID
+
 num_df = df_view.drop(columns=["STUDENT ID"], errors="ignore").copy()
 for c in num_df.columns:
     num_df[c] = pd.to_numeric(num_df[c], errors="coerce")
 
 num_df = num_df.dropna(axis=0, how="any")
+
 if num_df.shape[0] < 10:
     st.info("Korelasyon için yeterli temiz satır yok.")
 else:
@@ -264,72 +271,84 @@ else:
 
 st.divider()
 
+
 # -----------------------
 # 9) PCA (2D) + coloring by Grade
 # -----------------------
 st.subheader("9) PCA (2 bileşen) — 2D görselleştirme")
+
 pca_cols_default = feature_num_cols[:10] if len(feature_num_cols) >= 10 else feature_num_cols
+
 if len(pca_cols_default) < 2:
     st.info("PCA için en az 2 feature gerekli.")
 else:
     pca_cols = st.multiselect("PCA için kullanılacak sütunlar", feature_num_cols, default=pca_cols_default)
+
     if len(pca_cols) < 2:
         st.warning("En az 2 sütun seçmelisin.")
     else:
         X = df_view[pca_cols].apply(pd.to_numeric, errors="coerce").dropna()
-    if X.shape[0] < 20:
-        st.warning("PCA için yeterli temiz satır yok. Farklı sütun seç veya filtreleri azalt.")
-        st.stop()
+
+        if X.shape[0] < 20:
+            st.warning("PCA için yeterli temiz satır yok. Farklı sütun seç veya filtreleri azalt.")
+            st.stop()
+
+        scaler = StandardScaler()
+        Xs = scaler.fit_transform(X.values)
+
+        pca = PCA(n_components=2, random_state=42)
+        comps = pca.fit_transform(Xs)
+
+        fig, ax = plt.subplots()
+        if grade_col and grade_col in df_view.columns:
+            g = df_view.loc[X.index, grade_col].astype(str).values
+            for gg in np.unique(g):
+                m = (g == gg)
+                ax.scatter(comps[m, 0], comps[m, 1], s=18, label=f"GRADE {gg}")
+            ax.legend(fontsize=8, ncols=2)
         else:
-            scaler = StandardScaler()
-            Xs = scaler.fit_transform(X.values)
+            ax.scatter(comps[:, 0], comps[:, 1], s=18)
 
-            pca = PCA(n_components=2, random_state=42)
-            comps = pca.fit_transform(Xs)
-
-            fig, ax = plt.subplots()
-            if grade_col and grade_col in df_view.columns:
-                # Align grade with X index
-                g = df_view.loc[X.index, grade_col].astype(str).values
-                # Simple coloring by grade using multiple scatters (no explicit colors set)
-                for gg in np.unique(g):
-                    m = (g == gg)
-                    ax.scatter(comps[m, 0], comps[m, 1], s=18, label=f"GRADE {gg}")
-                ax.legend(fontsize=8, ncols=2)
-            else:
-                ax.scatter(comps[:, 0], comps[:, 1], s=18)
-
-            ax.set_xlabel("PC1")
-            ax.set_ylabel("PC2")
-            ax.set_title(f"PCA 2D (Explained var: {pca.explained_variance_ratio_.sum():.2f})")
-            st.pyplot(fig, use_container_width=True)
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_title(f"PCA 2D (Explained var: {pca.explained_variance_ratio_.sum():.2f})")
+        st.pyplot(fig, use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 10) KMeans clustering on PCA space (segmentasyon)
+# 10) KMeans clustering on PCA space
 # -----------------------
 st.subheader("10) Segmentasyon: KMeans (PCA uzayında)")
-if len(pca_cols_default) >= 2:
-    # reuse pca_cols from above if exists
-    if "pca_cols" in locals() and len(pca_cols) >= 2:
-        X = df_view[pca_cols].apply(pd.to_numeric, errors="coerce").dropna()
-        if X.shape[0] >= 20:
-            Xs = StandardScaler().fit_transform(X.values)
-            comps = PCA(n_components=2, random_state=42).fit_transform(Xs)
-            
-            if comps.shape[0] < 20:
-            st.warning("KMeans için yeterli veri yok.")
-            st.stop()
 
+if len(feature_num_cols) < 2:
+    st.info("KMeans için yeterli feature yok.")
+else:
+    # PCA ile aynı seçim kullanılsın; yoksa default
+    if "pca_cols" in locals() and len(pca_cols) >= 2:
+        km_cols = pca_cols
+    else:
+        km_cols = pca_cols_default
+
+    X_km = df_view[km_cols].apply(pd.to_numeric, errors="coerce").dropna()
+    if X_km.shape[0] < 20:
+        st.warning("KMeans için yeterli temiz satır yok.")
+    else:
+        Xs_km = StandardScaler().fit_transform(X_km.values)
+        comps_km = PCA(n_components=2, random_state=42).fit_transform(Xs_km)
+
+        if comps_km.shape[0] < 20:
+            st.warning("KMeans için yeterli veri yok.")
+        else:
             k = st.slider("Cluster sayısı (k)", 2, 6, 3)
             km = KMeans(n_clusters=k, random_state=42, n_init=10)
-            labels = km.fit_predict(comps)
+            labels = km.fit_predict(comps_km)
 
             fig, ax = plt.subplots()
             for lab in np.unique(labels):
                 m = (labels == lab)
-                ax.scatter(comps[m, 0], comps[m, 1], s=18, label=f"Cluster {lab}")
+                ax.scatter(comps_km[m, 0], comps_km[m, 1], s=18, label=f"Cluster {lab}")
             ax.legend(fontsize=8)
             ax.set_xlabel("PC1")
             ax.set_ylabel("PC2")
@@ -337,26 +356,22 @@ if len(pca_cols_default) >= 2:
             st.pyplot(fig, use_container_width=True)
 
             st.caption("Cluster özetleri (feature ortalamaları):")
-            tmp = df_view.loc[X.index, pca_cols].copy()
-            tmp["cluster"] = labels
-            st.dataframe(tmp.groupby("cluster").mean(numeric_only=True), use_container_width=True)
-        else:
-            st.info("KMeans için yeterli veri yok.")
-    else:
-        st.info("Önce PCA sütunlarını seç.")
-else:
-    st.info("KMeans için PCA yapılabilecek feature yok.")
+            tmp_km = df_view.loc[X_km.index, km_cols].apply(pd.to_numeric, errors="coerce")
+            tmp_km["cluster"] = labels
+            st.dataframe(tmp_km.groupby("cluster").mean(numeric_only=True), use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 11) ML: Model comparison (LogReg vs RandomForest) predicting GRADE
+# 11) ML: Model comparison predicting GRADE
 # -----------------------
-st.subheader("11) Makine Öğrenmesi: GRADE tahmini (Model karşılaştırma)")
+st.subheader("11) Makine Öğrenmesi: GRADE tahmini (LogReg vs RandomForest)")
+
 if not grade_col or grade_col not in df_view.columns:
     st.info("Bu bölüm için GRADE sütunu gerekli.")
 else:
-    # Features: use the numbered 1..30 columns if available, else all numeric columns except target
+    # Features for ML: prefer 1..30
     if len(feature_num_cols) >= 2:
         X_all = df_view[feature_num_cols].apply(pd.to_numeric, errors="coerce")
     else:
@@ -369,14 +384,19 @@ else:
     y = y_all[mask].astype(int)
 
     if len(X) < 50:
-        st.warning("Model eğitimi için temiz veri az olabilir (>=50 önerilir).")
+        st.warning("Model için temiz satır sayısı az olabilir (>=50 önerilir).")
 
-    test_size = st.slider("Test oranı", 0.1, 0.4, 0.2, 0.05)
+    test_size = st.slider("Test oranı", 0.10, 0.40, 0.20, 0.05)
+
+    strat = y.values if len(np.unique(y.values)) > 1 else None
     X_train, X_test, y_train, y_test = train_test_split(
-        X.values, y.values, test_size=test_size, random_state=42, stratify=y.values if len(np.unique(y.values)) > 1 else None
+        X.values, y.values,
+        test_size=test_size,
+        random_state=42,
+        stratify=strat
     )
 
-    # Logistic Regression (multinomial)
+    # Logistic Regression (scaled)
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
@@ -406,10 +426,9 @@ else:
         st.write(f"Accuracy: {acc_rf:.3f}")
         st.write(f"Macro F1: {f1_rf:.3f}")
 
-    # Confusion Matrix for best model
     best_name, best_pred = ("Random Forest", pred_rf) if f1_rf >= f1_lr else ("Logistic Regression", pred_lr)
-    cm = confusion_matrix(y_test, best_pred)
 
+    cm = confusion_matrix(y_test, best_pred)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.imshow(cm)
     ax.set_title(f"Confusion Matrix — {best_name}")
@@ -419,28 +438,29 @@ else:
     ax.set_yticks(range(cm.shape[0]))
     st.pyplot(fig, use_container_width=True)
 
-    # Feature importance (RF)
-    if hasattr(rf, "feature_importances_"):
-        st.subheader("12) Feature Importance (Random Forest)")
-        importances = pd.Series(rf.feature_importances_, index=X.columns.astype(str)).sort_values(ascending=False).head(15)
-        fig, ax = plt.subplots()
-        ax.bar(importances.index.astype(str), importances.values)
-        ax.set_title("Top 15 Feature Importances")
-        ax.tick_params(axis="x", rotation=45)
-        st.pyplot(fig, use_container_width=True)
+    # Feature importance for RF
+    st.subheader("12) Feature Importance (Random Forest)")
+    importances = pd.Series(rf.feature_importances_, index=X.columns.astype(str)).sort_values(ascending=False).head(15)
+    fig2, ax2 = plt.subplots()
+    ax2.bar(importances.index.astype(str), importances.values)
+    ax2.set_title("Top 15 Feature Importances")
+    ax2.tick_params(axis="x", rotation=45)
+    st.pyplot(fig2, use_container_width=True)
 
 st.divider()
 
+
 # -----------------------
-# 13) Short interpretation block
+# 13) Interpretation block
 # -----------------------
 st.subheader("13) Kısa yorum (sunum için)")
 st.write(
     """
-- **EDA** bölümünde dağılımlar ve ilişkiler görüldü (kategorik pie/bar + scatter + histogram).
-- **TotalScore**, öğrenci davranış/tercih değişkenlerinin genel bir özetini verir; GRADE ile ilişkisi boxplot ile gözlenebilir.
-- **PCA**, çok boyutlu veriyi 2 boyuta indirip örüntüleri (benzer öğrenci profilleri) görselleştirir.
-- **KMeans**, benzer öğrenci profillerini kümelere ayırarak segmentasyon sağlar.
-- **ML** bölümünde GRADE tahmini yapılıp iki model (LogReg vs RandomForest) karşılaştırılır.
+- **EDA**: Kategorik dağılımlar + scatter + histogram ile genel tablo incelendi.
+- **TotalScore**: Feature’ların toplamından türetilen bir özet skor; GRADE ile ilişki boxplot ile görülebilir.
+- **Korelasyon**: Sayısal değişkenlerin birlikte değişim yapısı gözlendi.
+- **PCA**: Çok boyutlu veriyi 2 boyuta indirip örüntüler görselleştirildi.
+- **KMeans**: Benzer öğrenci profilleri kümelendi (segmentasyon).
+- **ML**: GRADE tahmini için iki model karşılaştırıldı (LogReg vs RandomForest) ve önemlilikler raporlandı.
 """
 )
