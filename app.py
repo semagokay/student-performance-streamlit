@@ -318,7 +318,7 @@ if len(pca_cols_default) >= 2:
             comps = PCA(n_components=2, random_state=42).fit_transform(Xs)
 
             k = st.slider("Cluster sayısı (k)", 2, 6, 3)
-            km = KMeans(n_clusters=k, random_state=42, n_init="auto")
+            km = KMeans(n_clusters=k, random_state=42, n_init=10)
             labels = km.fit_predict(comps)
 
             fig, ax = plt.subplots()
