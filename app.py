@@ -278,8 +278,8 @@ else:
     else:
         X = df_view[pca_cols].apply(pd.to_numeric, errors="coerce").dropna()
     if X.shape[0] < 20:
-    st.warning("PCA için yeterli temiz satır yok. Farklı sütun seç veya filtreleri azalt.")
-    st.stop()
+        st.warning("PCA için yeterli temiz satır yok. Farklı sütun seç veya filtreleri azalt.")
+        st.stop()
         else:
             scaler = StandardScaler()
             Xs = scaler.fit_transform(X.values)
