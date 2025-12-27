@@ -377,57 +377,85 @@ else:
     else:
         X_all = df_view.drop(columns=["STUDENT ID", grade_col], errors="ignore").apply(pd.to_numeric, errors="coerce")
 
-    y_all = pd.to_numeric(df_view[grade_col], errors="coerce")
+    # --- Target: GRADE (numeric OR categorical) ---
+    y_raw = df_view[grade_col].copy()
 
-    mask = X_all.notna().all(axis=1) & y_all.notna()
-    X = X_all[mask]
-    y = y_all[mask].astype(int)
+    # X tarafında tamamen sayısal olmayan satırları at
+    mask_x = X_all.notna().all(axis=1)
+    X_all = X_all[mask_x]
+    y_raw = y_raw[mask_x]
 
-    if len(X) < 50:
-        st.warning("Model için temiz satır sayısı az olabilir (>=50 önerilir).")
+    # Eğer GRADE sayısala çevrilebiliyorsa sayısal kullan, değilse kategorik encode et
+    y_num = pd.to_numeric(y_raw, errors="coerce")
+
+    if y_num.notna().all():
+        y = y_num.astype(int).values
+        class_labels = sorted(np.unique(y))
+        label_map = {c: str(c) for c in class_labels}
+    else:
+        # kategorik (A/B/C gibi) -> integer encode
+        y_str = y_raw.astype(str).fillna("NA")
+        classes = sorted(y_str.unique().tolist())
+        class_to_int = {c: i for i, c in enumerate(classes)}
+        y = y_str.map(class_to_int).astype(int).values
+        label_map = {class_to_int[c]: c for c in classes}
+
+    X = X_all.values
+
+    # veri kontrolü
+    if X.shape[0] < 20:
+        st.warning("Model için yeterli temiz satır yok (>=20 önerilir). Filtreleri azalt veya farklı sütunlar kullan.")
+        st.stop()
+
+    if len(np.unique(y)) < 2:
+        st.warning("GRADE tek sınıfa düştü (ör. hepsi aynı). Filtreleri azalt.")
+        st.stop()
 
     test_size = st.slider("Test oranı", 0.10, 0.40, 0.20, 0.05)
 
-    strat = y.values if len(np.unique(y.values)) > 1 else None
+    # Stratify bazen az sınıflı veride patlıyor -> güvenli yaklaşım:
     X_train, X_test, y_train, y_test = train_test_split(
-        X.values, y.values,
+        X, y,
         test_size=test_size,
-        random_state=42,
-        stratify=strat
+        random_state=42
     )
 
     # Random Forest
     n_estimators = st.slider("Ağaç sayısı (n_estimators)", 100, 600, 400, 50)
     rf = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
     rf.fit(X_train, y_train)
-    pred_rf = rf.predict(X_test)
+    pred = rf.predict(X_test)
 
     # Metrics
-    acc_rf = accuracy_score(y_test, pred_rf)
-    f1_rf = f1_score(y_test, pred_rf, average="macro")
+    acc = accuracy_score(y_test, pred)
+    f1 = f1_score(y_test, pred, average="macro")
 
     st.write("**Random Forest Sonuçları**")
-    st.write(f"Accuracy: {acc_rf:.3f}")
-    st.write(f"Macro F1: {f1_rf:.3f}")
+    st.write(f"Accuracy: {acc:.3f}")
+    st.write(f"Macro F1: {f1:.3f}")
 
-    cm = confusion_matrix(y_test, pred_rf)
+    # Confusion matrix (etiketli)
+    cm = confusion_matrix(y_test, pred)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.imshow(cm)
     ax.set_title("Confusion Matrix — Random Forest")
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
+
+    tick_labels = [label_map[i] for i in range(cm.shape[0])]
     ax.set_xticks(range(cm.shape[1]))
     ax.set_yticks(range(cm.shape[0]))
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+    ax.set_yticklabels(tick_labels)
     st.pyplot(fig, use_container_width=True)
 
     # Feature importance for RF
     st.subheader("12) Feature Importance (Random Forest)")
-    importances = pd.Series(rf.feature_importances_, index=X.columns.astype(str)).sort_values(ascending=False).head(15)
+    importances = pd.Series(rf.feature_importances_, index=X_all.columns.astype(str)).sort_values(ascending=False).head(15)
     fig2, ax2 = plt.subplots()
     ax2.bar(importances.index.astype(str), importances.values)
     ax2.set_title("Top 15 Feature Importances")
     ax2.tick_params(axis="x", rotation=45)
     st.pyplot(fig2, use_container_width=True)
 
-    st.divider()
-
+st.divider()
