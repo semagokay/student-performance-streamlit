@@ -430,18 +430,3 @@ else:
 
 st.divider()
 
-
-# -----------------------
-# 13) Interpretation block
-# -----------------------
-st.subheader("13) Kısa yorum (sunum için)")
-st.write(
-    """
-- **EDA**: Kategorik dağılımlar + scatter + histogram ile genel tablo incelendi.
-- **TotalScore**: Feature’ların toplamından türetilen bir özet skor; GRADE ile ilişki boxplot ile görülebilir.
-- **Korelasyon**: Sayısal değişkenlerin birlikte değişim yapısı gözlendi.
-- **PCA**: Çok boyutlu veriyi 2 boyuta indirip örüntüler görselleştirildi.
-- **KMeans**: Benzer öğrenci profilleri kümelendi (segmentasyon).
-- **ML (Random Forest)**: GRADE tahmini için Random Forest modeli eğitildi; başarı metrikleri ve **feature importance** ile hangi değişkenlerin daha etkili olduğu yorumlandı.
-"""
-)
