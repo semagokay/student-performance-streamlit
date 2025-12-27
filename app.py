@@ -429,5 +429,5 @@ else:
     ax2.tick_params(axis="x", rotation=45)
     st.pyplot(fig2, use_container_width=True)
 
-st.divider()
+    st.divider()
 
