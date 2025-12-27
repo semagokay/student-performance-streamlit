@@ -12,7 +12,6 @@ from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 
 # -----------------------
@@ -22,7 +21,7 @@ st.set_page_config(page_title="Student Performance Dashboard", layout="wide")
 st.title("Higher Education Students Performance — Streamlit Dashboard")
 st.caption(
     "Bu dashboard: EDA (grafikler) + Korelasyon + PCA + KMeans segmentasyon + "
-    "Model karşılaştırma (LogReg vs RandomForest) akışını içerir."
+    "Makine Öğrenmesi (Random Forest ile GRADE tahmini) akışını içerir."
 )
 
 
@@ -364,9 +363,9 @@ st.divider()
 
 
 # -----------------------
-# 11) ML: Model comparison predicting GRADE
+# 11) ML: Predicting GRADE with Random Forest
 # -----------------------
-st.subheader("11) Makine Öğrenmesi: GRADE tahmini (LogReg vs RandomForest)")
+st.subheader("11) Makine Öğrenmesi: GRADE tahmini (Random Forest)")
 
 if not grade_col or grade_col not in df_view.columns:
     st.info("Bu bölüm için GRADE sütunu gerekli.")
@@ -396,42 +395,24 @@ else:
         stratify=strat
     )
 
-    # Logistic Regression (scaled)
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
-
-    lr = LogisticRegression(max_iter=2000, multi_class="auto")
-    lr.fit(X_train_s, y_train)
-    pred_lr = lr.predict(X_test_s)
-
     # Random Forest
-    rf = RandomForestClassifier(n_estimators=400, random_state=42)
+    n_estimators = st.slider("Ağaç sayısı (n_estimators)", 100, 600, 400, 50)
+    rf = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
     rf.fit(X_train, y_train)
     pred_rf = rf.predict(X_test)
 
     # Metrics
-    acc_lr = accuracy_score(y_test, pred_lr)
     acc_rf = accuracy_score(y_test, pred_rf)
-    f1_lr = f1_score(y_test, pred_lr, average="macro")
     f1_rf = f1_score(y_test, pred_rf, average="macro")
 
-    m1, m2 = st.columns(2)
-    with m1:
-        st.write("**Logistic Regression**")
-        st.write(f"Accuracy: {acc_lr:.3f}")
-        st.write(f"Macro F1: {f1_lr:.3f}")
-    with m2:
-        st.write("**Random Forest**")
-        st.write(f"Accuracy: {acc_rf:.3f}")
-        st.write(f"Macro F1: {f1_rf:.3f}")
+    st.write("**Random Forest Sonuçları**")
+    st.write(f"Accuracy: {acc_rf:.3f}")
+    st.write(f"Macro F1: {f1_rf:.3f}")
 
-    best_name, best_pred = ("Random Forest", pred_rf) if f1_rf >= f1_lr else ("Logistic Regression", pred_lr)
-
-    cm = confusion_matrix(y_test, best_pred)
+    cm = confusion_matrix(y_test, pred_rf)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.imshow(cm)
-    ax.set_title(f"Confusion Matrix — {best_name}")
+    ax.set_title("Confusion Matrix — Random Forest")
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
     ax.set_xticks(range(cm.shape[1]))
@@ -461,6 +442,6 @@ st.write(
 - **Korelasyon**: Sayısal değişkenlerin birlikte değişim yapısı gözlendi.
 - **PCA**: Çok boyutlu veriyi 2 boyuta indirip örüntüler görselleştirildi.
 - **KMeans**: Benzer öğrenci profilleri kümelendi (segmentasyon).
-- **ML**: GRADE tahmini için iki model karşılaştırıldı (LogReg vs RandomForest) ve önemlilikler raporlandı.
+- **ML (Random Forest)**: GRADE tahmini için Random Forest modeli eğitildi; başarı metrikleri ve **feature importance** ile hangi değişkenlerin daha etkili olduğu yorumlandı.
 """
 )
