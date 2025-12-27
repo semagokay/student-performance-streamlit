@@ -23,6 +23,7 @@ st.caption(
     "Bu dashboard: EDA (grafikler) + Korelasyon + PCA + KMeans segmentasyon + "
     "Makine Öğrenmesi (Random Forest ile GRADE tahmini) akışını içerir."
 )
+st.divider()
 
 
 # -----------------------
